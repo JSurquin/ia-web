@@ -1,8 +1,25 @@
+// ============================================================
+// documents/page.tsx — Page de gestion des documents
+//
+// Permet de :
+//   - Voir tous les documents de la base vectorielle
+//   - Ajouter un nouveau document (avec categorie optionnelle)
+//   - Supprimer un document
+//
+// Quand on ajoute un document, l'API genere automatiquement
+// son embedding via Ollama (nomic-embed-text) et l'insere
+// dans PostgreSQL. Ca prend 1-2 secondes.
+//
+// Les documents ajoutes ici sont immediatement disponibles
+// dans la recherche RAG (page Chat).
+// ============================================================
+
 "use client";
 
 import { useState, useEffect } from "react";
 import AuthGuard from "@/components/AuthGuard";
 
+// Type d'un document
 interface Doc {
   id: number;
   content: string;
@@ -10,13 +27,15 @@ interface Doc {
 }
 
 export default function DocumentsPage() {
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [newContent, setNewContent] = useState("");
-  const [newCategory, setNewCategory] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  // --- State ---
+  const [docs, setDocs] = useState<Doc[]>([]);         // Liste des documents
+  const [newContent, setNewContent] = useState("");     // Contenu du nouveau document
+  const [newCategory, setNewCategory] = useState("");   // Categorie du nouveau document
+  const [loading, setLoading] = useState(true);         // Chargement initial
+  const [adding, setAdding] = useState(false);          // Ajout en cours (embedding)
+  const [showForm, setShowForm] = useState(false);      // Afficher/masquer le formulaire
 
+  // --- Charger la liste des documents ---
   async function fetchDocs() {
     try {
       const res = await fetch("/api/documents");
@@ -27,8 +46,10 @@ export default function DocumentsPage() {
     }
   }
 
+  // Charger les documents au montage du composant
   useEffect(() => { fetchDocs(); }, []);
 
+  // --- Ajouter un document ---
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     if (!newContent.trim()) return;
@@ -43,6 +64,7 @@ export default function DocumentsPage() {
         }),
       });
       if (res.ok) {
+        // Reset le formulaire et recharger la liste
         setNewContent("");
         setNewCategory("");
         setShowForm(false);
@@ -53,6 +75,7 @@ export default function DocumentsPage() {
     }
   }
 
+  // --- Supprimer un document ---
   async function handleDelete(id: number) {
     if (!confirm("Supprimer ce document ?")) return;
     try {
@@ -61,6 +84,7 @@ export default function DocumentsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      // Retirer le document de la liste sans recharger
       setDocs((prev) => prev.filter((d) => d.id !== id));
     } catch { /* ignore */ }
   }
@@ -68,6 +92,7 @@ export default function DocumentsPage() {
   return (
     <AuthGuard>
       <div className="max-w-4xl mx-auto w-full p-6">
+        {/* --- En-tete --- */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-200">Documents</h1>
@@ -75,6 +100,7 @@ export default function DocumentsPage() {
               {docs.length} document{docs.length !== 1 ? "s" : ""} dans la base vectorielle
             </p>
           </div>
+          {/* Bouton pour afficher/masquer le formulaire d'ajout */}
           <button
             onClick={() => setShowForm(!showForm)}
             className={
@@ -88,6 +114,7 @@ export default function DocumentsPage() {
           </button>
         </div>
 
+        {/* --- Formulaire d'ajout (visible quand showForm = true) --- */}
         {showForm && (
           <form onSubmit={handleAdd} className="bg-[#1e293b] border border-[#334155] rounded-xl p-6 mb-6 space-y-4">
             <div>
@@ -120,21 +147,27 @@ export default function DocumentsPage() {
           </form>
         )}
 
+        {/* --- Liste des documents --- */}
         {loading ? (
+          // Spinner de chargement
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : docs.length === 0 ? (
+          // Message si aucun document
           <div className="text-center py-20 text-slate-500">
             Aucun document. Clique sur &quot;+ Ajouter&quot; pour commencer.
           </div>
         ) : (
+          // Liste des documents
           <div className="space-y-3">
             {docs.map((doc) => (
               <div key={doc.id} className="bg-[#1e293b] border border-[#334155] rounded-xl p-4 hover:border-indigo-500/30 transition-all group">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
+                    {/* Contenu du document */}
                     <p className="text-sm text-slate-200 leading-relaxed">{doc.content}</p>
+                    {/* Metadata : ID + categorie + langue */}
                     <div className="flex items-center gap-2 mt-2">
                       <span className="text-xs font-mono text-slate-600">#{doc.id}</span>
                       {doc.metadata?.category && (
@@ -149,6 +182,7 @@ export default function DocumentsPage() {
                       )}
                     </div>
                   </div>
+                  {/* Bouton supprimer (visible au hover) */}
                   <button
                     onClick={() => handleDelete(doc.id)}
                     className="p-2 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shrink-0"

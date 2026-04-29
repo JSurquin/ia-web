@@ -1,7 +1,18 @@
+// ============================================================
+// /api/documents — CRUD documents de la base vectorielle
+//
+// GET    → Liste tous les documents (sans les embeddings)
+// POST   → Ajoute un document (genere l'embedding automatiquement)
+// DELETE → Supprime un document par ID
+//
+// Toutes les routes necessitent d'etre authentifie (cookie JWT).
+// ============================================================
+
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getAllDocuments, ingestDocument, deleteDocument } from "@/lib/rag";
 
+// --- GET : Lister tous les documents ---
 export async function GET() {
   const user = await getSession();
   if (!user) {
@@ -16,6 +27,9 @@ export async function GET() {
   }
 }
 
+// --- POST : Ajouter un document ---
+// L'embedding est genere automatiquement par ingestDocument()
+// via Ollama (nomic-embed-text). Ca prend ~1-2 secondes.
 export async function POST(req: NextRequest) {
   const user = await getSession();
   if (!user) {
@@ -26,6 +40,7 @@ export async function POST(req: NextRequest) {
     if (!content) {
       return NextResponse.json({ error: "Contenu requis" }, { status: 400 });
     }
+    // ingestDocument : texte → embedding → INSERT dans PostgreSQL
     await ingestDocument(content, metadata || {});
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -34,6 +49,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// --- DELETE : Supprimer un document ---
 export async function DELETE(req: NextRequest) {
   const user = await getSession();
   if (!user) {
