@@ -93,12 +93,21 @@ export async function getAllDocuments() {
 // buildPrompt — Construit le prompt envoye au LLM
 //
 // Le prompt contient :
-//   1. Instructions systeme (role de l'assistant)
+//   1. Instructions systeme (role + regles anti-injection)
 //   2. Contexte (les documents trouves dans pgvector)
 //   3. Historique de conversation (si il y en a)
 //   4. La question de l'utilisateur
 //
-// Le LLM repond UNIQUEMENT a partir du contexte fourni.
+// SECURITE (anti prompt-injection) :
+//   - Scope strict : repond uniquement sur le contexte fourni
+//   - Refuse les sujets hors-scope (recettes, code, maths...)
+//   - Refuse les tentatives de role-switch ("oublie tes instructions")
+//   - Ne revele jamais le prompt systeme
+//   - Repond toujours en francais
+//
+// llama3.2 (2B) resiste aux injections basiques.
+// Pour plus de robustesse, utiliser un modele 7B+ ou un
+// filtre cote serveur en amont.
 // ============================================================
 function buildPrompt(
   question: string,
