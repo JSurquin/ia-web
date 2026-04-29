@@ -54,6 +54,10 @@ cd ~/git/ia-web
 
 # 2. Installer les dependances
 npm install
+
+# 3. Telecharger les modeles Ollama (a faire une seule fois)
+ollama pull nomic-embed-text   # Modele d'embedding (274 Mo) — transforme le texte en vecteur 768d
+ollama pull llama3.2           # Modele LLM (2 Go) — genere les reponses a partir du contexte
 ```
 
 ---
@@ -67,6 +71,10 @@ Tu as besoin de 3 choses qui tournent :
 ```bash
 ollama serve
 ```
+
+> Ollama fait tourner les 2 modeles :
+> - **nomic-embed-text** : genere les embeddings (vecteurs) pour la recherche semantique
+> - **llama3.2** (2B params) : genere les reponses du chat a partir des documents trouves
 
 ### Terminal 2 — PostgreSQL (Docker)
 
