@@ -25,13 +25,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { question, history } = await req.json();
+    const { question, history, webSearch } = await req.json();
     if (!question) {
       return NextResponse.json({ error: "Question requise" }, { status: 400 });
     }
     // Lancer le pipeline RAG complet
-    // Retourne { answer: string, sources: SearchResult[] }
-    const result = await askRAG(question, history || []);
+    // webSearch = true → recherche aussi sur internet (DuckDuckGo)
+    const result = await askRAG(question, history || [], webSearch === true);
     return NextResponse.json(result);
   } catch (err) {
     console.error("Chat error:", err);

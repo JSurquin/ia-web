@@ -29,14 +29,17 @@ import AuthGuard from "@/components/AuthGuard";
 interface Message {
   role: "user" | "assistant";
   content: string;
-  sources?: { content: string; similarity: number }[]; // Uniquement pour les reponses
+  sources?: { content: string; similarity: number }[];
+  webResults?: { title: string; snippet: string; url: string }[];
 }
 
 export default function ChatPage() {
   // --- State ---
-  const [messages, setMessages] = useState<Message[]>([]); // Historique de conversation
-  const [input, setInput] = useState("");                   // Texte du champ de saisie
-  const [loading, setLoading] = useState(false);            // True pendant l'appel API
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);        // Toggle recherche web
+  const [searchPhase, setSearchPhase] = useState("");       // Phase affichee pendant le chargement
 
   // --- Refs ---
   const bottomRef = useRef<HTMLDivElement>(null);   // Pour scroll automatique en bas
@@ -56,26 +59,35 @@ export default function ChatPage() {
     const q = input.trim();
     if (!q || loading) return;
 
-    // Ajouter le message user dans l'historique
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: q }]);
     setLoading(true);
 
     try {
-      // Envoyer la question + tout l'historique au serveur
+      // Afficher la phase de recherche
+      setSearchPhase("Recherche dans la documentation...");
+      if (webSearch) {
+        // Petit delai pour que l'utilisateur voit la phase docs avant le web
+        setTimeout(() => setSearchPhase("Recherche en ligne en cours..."), 1500);
+      }
+
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q, history }),
+        body: JSON.stringify({ question: q, history, webSearch }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      // Ajouter la reponse de l'assistant avec les sources
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.answer, sources: data.sources },
+        {
+          role: "assistant",
+          content: data.answer,
+          sources: data.sources,
+          webResults: data.webResults,
+        },
       ]);
     } catch (err) {
       // En cas d'erreur, afficher le message d'erreur comme reponse
@@ -83,7 +95,8 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, { role: "assistant", content: "Erreur: " + msg }]);
     } finally {
       setLoading(false);
-      inputRef.current?.focus(); // Refocus le champ apres la reponse
+      setSearchPhase("");
+      inputRef.current?.focus();
     }
   }
 
@@ -140,18 +153,35 @@ export default function ChatPage() {
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                 </div>
 
-                {/* Sources (affiches sous la reponse de l'assistant) */}
+                {/* Sources docs (affiches sous la reponse de l'assistant) */}
                 {msg.sources && msg.sources.length > 0 && (
                   <div className="mt-2 space-y-1">
-                    <p className="text-xs text-slate-500 ml-1">Sources :</p>
+                    <p className="text-xs text-slate-500 ml-1">📄 Documentation interne :</p>
                     {msg.sources.map((s, j) => (
                       <div key={j} className="text-xs bg-[#1e293b]/50 border border-[#334155]/50 rounded-lg px-3 py-2 text-slate-500">
-                        {/* Score de similarite en pourcentage */}
                         <span className="text-cyan-400 font-mono">{(s.similarity * 100).toFixed(0)}%</span>
                         {" — "}
-                        {/* Contenu tronque a 100 caracteres */}
                         {s.content.length > 100 ? s.content.slice(0, 100) + "..." : s.content}
                       </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Sources web (affiches si la recherche web etait activee) */}
+                {msg.webResults && msg.webResults.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-xs text-slate-500 ml-1">🌐 Resultats web :</p>
+                    {msg.webResults.map((w, j) => (
+                      <a
+                        key={j}
+                        href={w.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-xs bg-[#1e293b]/50 border border-[#334155]/50 rounded-lg px-3 py-2 text-slate-500 hover:border-indigo-500/50 hover:text-slate-400 transition-colors"
+                      >
+                        <span className="text-indigo-400 font-medium">{w.title}</span>
+                        <span className="block mt-0.5">{w.snippet.length > 120 ? w.snippet.slice(0, 120) + "..." : w.snippet}</span>
+                      </a>
                     ))}
                   </div>
                 )}
@@ -159,14 +189,19 @@ export default function ChatPage() {
             </div>
           ))}
 
-          {/* Indicateur de chargement (3 points qui rebondissent) */}
+          {/* Indicateur de chargement avec message de phase */}
           {loading && (
             <div className="flex justify-start">
               <div className="bg-[#1e293b] border border-[#334155] rounded-2xl rounded-bl-md px-4 py-3">
-                <div className="flex gap-1.5">
-                  <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-1.5">
+                    <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                  {searchPhase && (
+                    <span className="text-xs text-slate-500 italic">{searchPhase}</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -177,9 +212,23 @@ export default function ChatPage() {
         </div>
 
         {/* --- Barre de saisie (en bas) --- */}
-        <div className="border-t border-[#334155] p-4">
+        <div className="border-t border-[#334155] p-4 space-y-2">
+          {/* Toggle recherche web */}
+          <div className="flex items-center gap-2 px-1">
+            <button
+              type="button"
+              onClick={() => setWebSearch(!webSearch)}
+              className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (webSearch ? "bg-indigo-500" : "bg-[#334155]")}
+              title="Rechercher aussi sur internet"
+            >
+              <span className={"inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform " + (webSearch ? "translate-x-4.5" : "translate-x-0.5")} />
+            </button>
+            <span className={"text-xs transition-colors " + (webSearch ? "text-indigo-400" : "text-slate-500")}>
+              🌐 Recherche web
+            </span>
+          </div>
+
           <form onSubmit={handleSubmit} className="flex gap-3 items-center">
-            {/* Bouton poubelle (visible uniquement si il y a des messages) */}
             {messages.length > 0 && (
               <button
                 type="button"
@@ -191,18 +240,16 @@ export default function ChatPage() {
               </button>
             )}
 
-            {/* Champ de saisie */}
             <input
               ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Pose ta question..."
+              placeholder={webSearch ? "Pose ta question (docs + web)..." : "Pose ta question..."}
               disabled={loading}
               className="flex-1 px-4 py-3 bg-[#1e293b] border border-[#334155] rounded-xl text-slate-200 placeholder-slate-600 transition-all disabled:opacity-50"
             />
 
-            {/* Bouton envoyer */}
             <button
               type="submit"
               disabled={loading || !input.trim()}

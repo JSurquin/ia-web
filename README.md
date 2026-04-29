@@ -8,29 +8,33 @@ C'est l'interface web du projet `ia` (CLI). Les deux partagent la meme base de d
 ## Comment ca marche
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      PIPELINE RAG                         │
-│                                                           │
-│   Navigateur (Next.js)                                    │
-│       │                                                   │
-│       ▼                                                   │
-│   POST /api/chat   { question, history }                  │
-│       │                                                   │
-│       ├──► Ollama (nomic-embed-text)                      │
-│       │        → transforme la question en vecteur 768d   │
-│       │                                                   │
-│       ├──► PostgreSQL + pgvector                          │
-│       │        → SELECT ... ORDER BY embedding <=> $1     │
-│       │        → retourne les 3 docs les plus proches     │
-│       │                                                   │
-│       ├──► Ollama (llama3.2)                              │
-│       │        → recoit contexte + question + historique  │
-│       │        → genere la reponse                        │
-│       │                                                   │
-│       ▼                                                   │
-│   { answer, sources[] }  → affiche dans le chat           │
-│                                                           │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    PIPELINE RAG HYBRIDE                       │
+│                                                              │
+│   Navigateur (Next.js)                                       │
+│       │                                                      │
+│       ▼                                                      │
+│   POST /api/chat   { question, history, webSearch }          │
+│       │                                                      │
+│       ├──► Ollama (nomic-embed-text)                         │
+│       │        → transforme la question en vecteur 768d      │
+│       │                                                      │
+│       ├──► PostgreSQL + pgvector                             │
+│       │        → SELECT ... ORDER BY embedding <=> $1        │
+│       │        → retourne les 3 docs les plus proches        │
+│       │                                                      │
+│       ├──► DuckDuckGo (si webSearch = true)                  │
+│       │        → scrape HTML de html.duckduckgo.com          │
+│       │        → retourne les 5 premiers resultats           │
+│       │                                                      │
+│       ├──► Ollama (llama3.2)                                 │
+│       │        → recoit contexte (docs + web) + historique   │
+│       │        → genere la reponse                           │
+│       │                                                      │
+│       ▼                                                      │
+│   { answer, sources[], webResults[] }  → affiche dans le chat│
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -126,10 +130,24 @@ Puis ouvre **http://localhost:3000**.
 - L'agent :
   1. Transforme ta question en vecteur (embedding)
   2. Cherche les 3 documents les plus proches dans pgvector
-  3. Envoie le contexte + ta question au LLM
-  4. Affiche la reponse + les sources avec leur score de similarite
+  3. (Optionnel) Cherche sur internet via DuckDuckGo
+  4. Envoie le contexte fusionne + ta question au LLM
+  5. Affiche la reponse + les sources docs + les sources web
 - L'historique de conversation est envoye au LLM a chaque question
 - Clique sur la poubelle pour effacer le chat
+
+### 2b. Recherche web (hybride docs + internet)
+
+- Un **toggle "Recherche web"** est disponible au-dessus du champ de saisie
+- Quand il est active (indigo) :
+  - L'app cherche dans pgvector ET sur DuckDuckGo en parallele
+  - Le message "Recherche en ligne en cours..." s'affiche pendant le chargement
+  - Les resultats web apparaissent sous les sources internes (avec titre + lien cliquable)
+  - Le prompt du LLM est adapte pour utiliser les deux sources
+- Quand il est desactive (gris) :
+  - Fonctionnement classique, uniquement la documentation interne
+- **100% gratuit** : pas de cle API, on scrape le HTML de DuckDuckGo directement
+- Le code du scraper est dans `src/lib/web-search.ts`
 
 ### 3. Gestion des documents
 
@@ -165,7 +183,8 @@ ia-web/
 │   │   ├── config.ts                ← Constantes (DB, modeles, URLs, JWT)
 │   │   ├── db.ts                    ← Pool de connexions PostgreSQL
 │   │   ├── auth.ts                  ← Inscription, login, JWT, session
-│   │   └── rag.ts                   ← Recherche vectorielle, ingestion, LLM
+│   │   ├── rag.ts                   ← Recherche vectorielle, ingestion, LLM
+│   │   └── web-search.ts           ← Scraper DuckDuckGo (recherche web gratuite)
 │   │
 │   ├── components/                  ← Composants React reutilisables
 │   │   ├── AuthGuard.tsx            ← Protege les pages (verifie la session)
@@ -218,17 +237,23 @@ Retourne l'utilisateur connecte a partir du cookie JWT.
 
 ### `POST /api/chat`
 
-Pipeline RAG complet. Necessite d'etre authentifie.
+Pipeline RAG complet (hybride docs + web). Necessite d'etre authentifie.
 
 ```json
-// Request
+// Request (sans recherche web)
 { "question": "Comment reinitialiser mon mot de passe ?", "history": [] }
+
+// Request (avec recherche web)
+{ "question": "Quoi de neuf en IA ?", "history": [], "webSearch": true }
 
 // Response
 {
   "answer": "Pour reinitialiser votre mot de passe, allez dans...",
   "sources": [
     { "id": 1, "content": "Pour reinitialiser...", "similarity": 0.71, "metadata": {} }
+  ],
+  "webResults": [
+    { "title": "Titre du resultat", "snippet": "Description...", "url": "https://..." }
   ]
 }
 ```
@@ -280,6 +305,7 @@ Supprime un document par ID.
 | Runtime IA    | Ollama                        | Fait tourner les modeles en local   |
 | ORM/DB        | pg (node-postgres)            | Connexion PostgreSQL                |
 | Embeddings SDK| @langchain/ollama             | Interface LangChain pour embeddings |
+| Recherche web | DuckDuckGo (scraping HTML)    | Recherche internet gratuite, sans API |
 
 ---
 

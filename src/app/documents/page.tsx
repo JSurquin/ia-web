@@ -23,7 +23,7 @@ import AuthGuard from "@/components/AuthGuard";
 interface Doc {
   id: number;
   content: string;
-  metadata: Record<string, unknown>;
+  metadata: Record<string, string>;
 }
 
 export default function DocumentsPage() {
