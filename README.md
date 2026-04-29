@@ -42,7 +42,7 @@ C'est l'interface web du projet `ia` (CLI). Les deux partagent la meme base de d
 | OrbStack    | `brew install orbstack`            | Docker pour PostgreSQL          |
 | Node.js     | >= 18 (`brew install node`)        | Runtime Next.js                 |
 | Ollama      | `brew install ollama`              | LLM + Embeddings en local      |
-| Projet `ia` | `~/git/ia` (le projet CLI)         | docker-compose.yml + seed data  |
+| Projet `ia` | `~/git/ia` (le projet CLI)         | Projet CLI equivalent (optionnel)|
 
 ---
 
@@ -83,16 +83,19 @@ ollama serve
 orb start
 
 # Lancer PostgreSQL + pgvector
-cd ~/git/ia
+cd ~/git/ia-web
 docker compose up -d
 ```
 
-Si c'est la premiere fois, initialise la base et injecte les documents :
+Si c'est la premiere fois, initialise la base et injecte les documents exemple :
 
 ```bash
-cd ~/git/ia
-npm run setup
+cd ~/git/ia-web
+npm run seed
 ```
+
+> Ce script cree les tables (`documents`, `users`), l'index HNSW, et injecte 10 documents exemple avec leurs embeddings.
+> Si la base contient deja des documents, le seed est ignore (pas de doublons).
 
 ### Terminal 3 — Next.js
 
@@ -150,8 +153,12 @@ Puis ouvre **http://localhost:3000**.
 
 ```
 ia-web/
+├── docker-compose.yml               ← PostgreSQL 16 + pgvector
 ├── next.config.ts                   ← Config Next.js (packages serveur)
 ├── package.json                     ← Dependances + scripts
+│
+├── scripts/
+│   └── seed.ts                      ← Seed : cree les tables + injecte 10 docs exemple
 │
 ├── src/
 │   ├── lib/                         ← Logique metier (serveur)
@@ -281,7 +288,7 @@ Supprime un document par ID.
 Les deux projets partagent :
 - La meme base PostgreSQL (`ragdb`) avec la meme table `documents`
 - Les memes modeles Ollama (`nomic-embed-text` + `llama3.2`)
-- Le meme `docker-compose.yml` (dans `~/git/ia`)
+- Chacun a son propre `docker-compose.yml` (meme config)
 
 Tu peux ajouter des documents depuis le CLI (`npm run ingest`) et les retrouver dans l'interface web, et vice versa.
 
@@ -311,5 +318,5 @@ JWT_SECRET=change-moi-en-prod
 | "Non authentifie" sur /chat           | Se connecter sur /login d'abord                       |
 | Reponses lentes (30s+)               | Normal, llama3.2 tourne sur CPU — premier appel = lent|
 | "Erreur serveur" sur le chat          | Verifier `ollama serve` dans un terminal               |
-| Documents non trouves dans la recherche| Verifier que `npm run ingest` a ete lance (projet ia) |
+| Documents non trouves dans la recherche| Lancer `npm run seed` pour injecter les documents     |
 | OrbStack ne demarre pas Docker       | Lancer `orb start` avant `docker compose up`           |
