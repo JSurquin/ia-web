@@ -15,10 +15,9 @@ import { query } from "./db";
 import { searchWeb, formatWebResultsAsContext, WebResult } from "./web-search";
 
 // Instance d'embeddings (singleton, reutilisee a chaque appel)
-// Appelle Ollama pour transformer du texte en vecteur de 768 nombres
 const embeddings = new OllamaEmbeddings({
-  model: EMBEDDING_MODEL,  // nomic-embed-text
-  baseUrl: OLLAMA_BASE_URL, // http://localhost:11434
+  model: EMBEDDING_MODEL,
+  baseUrl: OLLAMA_BASE_URL,
 });
 
 // Type de retour pour les resultats de recherche
@@ -33,7 +32,6 @@ export interface SearchResult {
 // searchDocuments — Recherche semantique dans pgvector
 //
 // 1. Transforme la requete en vecteur via Ollama
-//    → prefix "search_query:" requis par nomic-embed-text
 // 2. Cherche les documents les plus proches par distance cosine
 //    → operateur <=> dans pgvector
 // 3. Retourne les top K avec leur score de similarite
@@ -43,7 +41,7 @@ export async function searchDocuments(
   topK = 3
 ): Promise<SearchResult[]> {
   // Generer le vecteur de la question
-  const vector = await embeddings.embedQuery("search_query: " + userQuery);
+  const vector = await embeddings.embedQuery(userQuery);
 
   // Requete pgvector : trier par distance cosine, garder les plus proches
   // 1 - distance = similarite (1 = parfait, 0 = rien a voir)
@@ -58,7 +56,6 @@ export async function searchDocuments(
 // ingestDocument — Ajoute un document dans la base vectorielle
 //
 // 1. Genere l'embedding du texte via Ollama
-//    → prefix "search_document:" requis par nomic-embed-text
 // 2. Insere le texte + metadata + vecteur dans PostgreSQL
 // ============================================================
 export async function ingestDocument(
@@ -66,9 +63,7 @@ export async function ingestDocument(
   metadata: Record<string, unknown> = {}
 ) {
   // embedDocuments prend un tableau, retourne un tableau de vecteurs
-  const [vector] = await embeddings.embedDocuments([
-    "search_document: " + content,
-  ]);
+  const [vector] = await embeddings.embedDocuments([content]);
 
   // Insert dans PostgreSQL (pgvector accepte le format JSON pour les vecteurs)
   await query(

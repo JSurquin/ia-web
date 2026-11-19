@@ -18,15 +18,13 @@ export const DB_CONFIG = {
 };
 
 // --- Modele d'embedding ---
-// nomic-embed-text genere des vecteurs de 768 dimensions
-// Necessite le prefix "search_query:" pour les requetes
-// et "search_document:" pour l'indexation
-export const EMBEDDING_MODEL = "nomic-embed-text";
+// leoipulsar/harrier-0.6b genere des vecteurs de 1024 dimensions (Ollama)
+export const EMBEDDING_MODEL = "leoipulsar/harrier-0.6b";
 
 // --- Dimension des vecteurs ---
-// Doit correspondre a la colonne VECTOR(768) dans PostgreSQL
+// Doit correspondre a la colonne VECTOR(1024) dans PostgreSQL
 // Si tu changes de modele d'embedding, change cette valeur aussi
-export const EMBEDDING_DIM = 768;
+export const EMBEDDING_DIM = 1024;
 
 // --- Modele LLM ---
 // llama3.2 = 2B parametres, ~2 Go — le plus leger de la famille Llama

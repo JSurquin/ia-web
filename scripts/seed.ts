@@ -8,7 +8,7 @@
 //   4. Cree l'index HNSW pour la recherche rapide
 //   5. Injecte 10 documents exemple avec leurs embeddings
 //
-// Les embeddings sont generes via Ollama (nomic-embed-text).
+// Les embeddings sont generes via Ollama (voir EMBEDDING_MODEL dans config.ts).
 // Chaque document prend ~1 seconde a ingerer.
 //
 // Usage : npm run seed
@@ -17,18 +17,12 @@
 
 import pg from "pg";
 import { OllamaEmbeddings } from "@langchain/ollama";
-
-// --- Config (meme valeurs que src/lib/config.ts) ---
-const DB_CONFIG = {
-  user: process.env.PG_USER || "postgres",
-  password: process.env.PG_PASSWORD || "postgres",
-  host: process.env.PG_HOST || "localhost",
-  port: parseInt(process.env.PG_PORT || "5432"),
-  database: process.env.PG_DATABASE || "ragdb",
-};
-const EMBEDDING_MODEL = "nomic-embed-text";
-const EMBEDDING_DIM = 768;
-const OLLAMA_BASE_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+import {
+  DB_CONFIG,
+  EMBEDDING_DIM,
+  EMBEDDING_MODEL,
+  OLLAMA_BASE_URL,
+} from "../src/lib/config";
 
 // --- Documents exemple ---
 // Ce sont les documents qui alimentent le RAG.
@@ -88,17 +82,199 @@ const SAMPLE_DOCS = [
   },
 ];
 
+let currentStep = "demarrage";
+
+function pgConnectionLabel() {
+  return `${DB_CONFIG.user}@${DB_CONFIG.host}:${DB_CONFIG.port}/${DB_CONFIG.database}`;
+}
+
+function unwrapErrorMessage(err: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  const seen = new Set<unknown>();
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    if (current.message) parts.push(current.message);
+    current = current.cause;
+  }
+  if (parts.length === 0) {
+    return typeof err === "string" ? err : String(err);
+  }
+  return parts.join(" → ");
+}
+
+function pgHint(code: string | undefined, message: string): string[] {
+  const hints: string[] = [];
+  switch (code) {
+    case "ECONNREFUSED":
+      hints.push("PostgreSQL ne repond pas sur " + DB_CONFIG.host + ":" + DB_CONFIG.port);
+      hints.push("Lance la base : docker compose up -d");
+      hints.push("Puis verifie : docker ps | grep pgvector");
+      break;
+    case "ENOTFOUND":
+      hints.push("Hote PostgreSQL introuvable : " + DB_CONFIG.host);
+      hints.push('Verifie PG_HOST ou utilise "localhost"');
+      break;
+    case "28P01":
+      hints.push("Identifiants PostgreSQL invalides (PG_USER / PG_PASSWORD)");
+      break;
+    case "3D000":
+      hints.push('La base "' + DB_CONFIG.database + '" n\'existe pas (PG_DATABASE)');
+      hints.push(
+        "Cree-la : docker exec pgvector psql -U postgres -c 'CREATE DATABASE " + DB_CONFIG.database + "'"
+      );
+      break;
+    case "42501":
+      if (/extension|vector/i.test(message)) {
+        hints.push("L'utilisateur PostgreSQL n'a pas le droit de creer l'extension vector");
+        hints.push("Utilise l'image pgvector/pgvector (voir docker-compose.yml)");
+      }
+      break;
+    case "58P01":
+    case "53100":
+      hints.push("Erreur disque / fichiers cote PostgreSQL — consulte les logs du conteneur");
+      hints.push("docker logs pgvector");
+      break;
+    default:
+      if (/extension "vector" does not exist/i.test(message)) {
+        hints.push("L'extension pgvector n'est pas disponible sur ce serveur PostgreSQL");
+        hints.push("Utilise l'image pgvector/pgvector:pg16 (docker compose up -d)");
+      }
+      break;
+  }
+  return hints;
+}
+
+function ollamaHint(message: string): string[] {
+  const hints: string[] = [];
+  const url = OLLAMA_BASE_URL;
+  if (/fetch failed|ECONNREFUSED|Failed to fetch|connect/i.test(message)) {
+    hints.push("Ollama ne repond pas sur " + url);
+    hints.push("Dans un autre terminal : ollama serve");
+    hints.push("Variable optionnelle : OLLAMA_URL=" + url);
+  }
+  if (/not found|does not exist|404|model/i.test(message)) {
+    hints.push('Modele requis : ollama pull ' + EMBEDDING_MODEL);
+    hints.push("Liste des modeles : ollama list");
+  }
+  if (hints.length === 0) {
+    hints.push("Verifie qu'Ollama tourne : curl " + url + "/api/tags");
+    hints.push("Puis : ollama pull " + EMBEDDING_MODEL);
+  }
+  return hints;
+}
+
+function stepHints(step: string, err: unknown): string[] {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code: unknown }).code)
+      : undefined;
+  const message = unwrapErrorMessage(err);
+
+  if (
+    step.startsWith("connexion PostgreSQL") ||
+    step.startsWith("extension pgvector") ||
+    step.startsWith("table ") ||
+    step.startsWith("index HNSW") ||
+    step.startsWith("comptage documents")
+  ) {
+    return pgHint(code, message);
+  }
+  if (step.startsWith("verification Ollama") || step.includes("ingestion documents")) {
+    return ollamaHint(message);
+  }
+  return ["Relance avec plus de detail : DEBUG_SEED=1 pnpm run seed"];
+}
+
+function reportSeedFailure(err: unknown) {
+  const message = unwrapErrorMessage(err);
+  const pgCode =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code: unknown }).code)
+      : undefined;
+
+  console.error("\n══════════════════════════════════════════════════");
+  console.error("✗ Echec du seed (pnpm / npm affiche seulement ELIFECYCLE)");
+  console.error("══════════════════════════════════════════════════");
+  console.error("  Etape        : " + currentStep);
+  console.error("  PostgreSQL   : " + pgConnectionLabel());
+  console.error("  Ollama       : " + OLLAMA_BASE_URL + " (modele " + EMBEDDING_MODEL + ")");
+  console.error("  Message      : " + message);
+  if (pgCode && pgCode.length <= 10) {
+    console.error("  Code erreur  : " + pgCode);
+  }
+
+  const hints = stepHints(currentStep, err);
+  if (hints.length > 0) {
+    console.error("\n  Pistes :");
+    for (const h of hints) {
+      console.error("    • " + h);
+    }
+  }
+
+  console.error("\n  Variables utiles : PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE, OLLAMA_URL");
+  console.error("══════════════════════════════════════════════════\n");
+
+  if (process.env.DEBUG_SEED) {
+    console.error("DEBUG_SEED — erreur complete :\n", err);
+  }
+
+  process.exit(1);
+}
+
+async function assertOllamaReady() {
+  currentStep = "verification Ollama";
+  const tagsUrl = OLLAMA_BASE_URL.replace(/\/$/, "") + "/api/tags";
+  let res: Response;
+  try {
+    res = await fetch(tagsUrl);
+  } catch (err) {
+    const hint = unwrapErrorMessage(err);
+    throw new Error("Impossible de joindre Ollama (" + tagsUrl + ") : " + hint, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
+
+  if (!res.ok) {
+    throw new Error("Ollama a repondu HTTP " + res.status + " sur " + tagsUrl);
+  }
+
+  const data = (await res.json()) as { models?: { name: string }[] };
+  const names = data.models?.map((m) => m.name) ?? [];
+  const hasEmbedModel = names.some(
+    (n) => n === EMBEDDING_MODEL || n.startsWith(EMBEDDING_MODEL + ":")
+  );
+
+  if (!hasEmbedModel) {
+    const listed = names.length ? names.join(", ") : "(aucun modele installe)";
+    throw new Error(
+      'Modele "' +
+        EMBEDDING_MODEL +
+        '" introuvable dans Ollama. Modeles vus : ' +
+        listed +
+        '. Lance : ollama pull ' +
+        EMBEDDING_MODEL
+    );
+  }
+
+  console.log("✓ Ollama pret (" + EMBEDDING_MODEL + ")\n");
+}
+
 async function seed() {
   const client = new pg.Client(DB_CONFIG);
-  await client.connect();
-  console.log("✓ Connecte a PostgreSQL\n");
+  try {
+    currentStep = "connexion PostgreSQL";
+    await client.connect();
+    console.log("✓ Connecte a PostgreSQL (" + pgConnectionLabel() + ")\n");
 
-  // --- Etape 1 : Extension pgvector ---
-  await client.query("CREATE EXTENSION IF NOT EXISTS vector");
-  console.log("✓ Extension 'vector' activee");
+    // --- Etape 1 : Extension pgvector ---
+    currentStep = "extension pgvector";
+    await client.query("CREATE EXTENSION IF NOT EXISTS vector");
+    console.log("✓ Extension 'vector' activee");
 
-  // --- Etape 2 : Table documents ---
-  await client.query(`
+    // --- Etape 2 : Table documents ---
+    currentStep = "table documents";
+    await client.query(`
     CREATE TABLE IF NOT EXISTS documents (
       id SERIAL PRIMARY KEY,
       content TEXT NOT NULL,
@@ -106,10 +282,39 @@ async function seed() {
       embedding VECTOR(${EMBEDDING_DIM})
     )
   `);
-  console.log("✓ Table 'documents' prete");
+    console.log("✓ Table 'documents' prete");
 
-  // --- Etape 3 : Table users ---
-  await client.query(`
+    // Colonne embedding : migrer la dimension si la table existait (ex. nomic 768 → harrier 1024)
+    currentStep = "migration dimension embedding";
+    await client.query("DROP INDEX IF EXISTS documents_embedding_idx");
+    try {
+      await client.query(
+        `ALTER TABLE documents ALTER COLUMN embedding TYPE vector(${EMBEDDING_DIM})`
+      );
+    } catch (err) {
+      const msg = unwrapErrorMessage(err);
+      if (/dimension/i.test(msg)) {
+        const n = (
+          await client.query("SELECT count(*)::int AS n FROM documents")
+        ).rows[0].n as number;
+        if (n > 0) {
+          console.log(
+            `⚠ Anciens embeddings (${n} docs) incompatibles — TRUNCATE puis migration…`
+          );
+          await client.query("TRUNCATE documents RESTART IDENTITY");
+        }
+        await client.query(
+          `ALTER TABLE documents ALTER COLUMN embedding TYPE vector(${EMBEDDING_DIM})`
+        );
+      } else {
+        throw err;
+      }
+    }
+    console.log(`✓ Colonne embedding en vector(${EMBEDDING_DIM})`);
+
+    // --- Etape 3 : Table users ---
+    currentStep = "table users";
+    await client.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -118,54 +323,78 @@ async function seed() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
-  console.log("✓ Table 'users' prete");
+    console.log("✓ Table 'users' prete");
 
-  // --- Etape 4 : Index HNSW ---
-  await client.query(`
+    // --- Etape 4 : Index HNSW ---
+    currentStep = "index HNSW";
+    await client.query(`
     CREATE INDEX IF NOT EXISTS documents_embedding_idx
     ON documents
     USING hnsw (embedding vector_cosine_ops)
   `);
-  console.log("✓ Index HNSW cree\n");
+    console.log("✓ Index HNSW cree\n");
 
-  // --- Etape 5 : Verifier si des documents existent deja ---
-  const countRes = await client.query("SELECT count(*) FROM documents");
-  const count = parseInt(countRes.rows[0].count);
-  if (count > 0) {
-    console.log(`La base contient deja ${count} documents. Seed ignore.`);
-    console.log("Pour re-seeder, vide la table d'abord :");
-    console.log("  docker exec pgvector psql -U postgres -d ragdb -c 'TRUNCATE documents RESTART IDENTITY'\n");
-    await client.end();
-    return;
+    // --- Etape 5 : Verifier si des documents existent deja ---
+    currentStep = "comptage documents";
+    const countRes = await client.query("SELECT count(*) FROM documents");
+    const count = parseInt(countRes.rows[0].count);
+    if (count > 0) {
+      console.log(`La base contient deja ${count} documents. Seed ignore.`);
+      console.log("Pour re-seeder, vide la table d'abord :");
+      console.log("  docker exec pgvector psql -U postgres -d ragdb -c 'TRUNCATE documents RESTART IDENTITY'\n");
+      return;
+    }
+
+    // --- Etape 6 : Ingerer les documents ---
+    await assertOllamaReady();
+
+    const embeddings = new OllamaEmbeddings({
+      model: EMBEDDING_MODEL,
+      baseUrl: OLLAMA_BASE_URL,
+    });
+
+    console.log(`Ingestion de ${SAMPLE_DOCS.length} documents (Ollama, ~1 s/doc)...\n`);
+
+    for (let i = 0; i < SAMPLE_DOCS.length; i++) {
+      const doc = SAMPLE_DOCS[i];
+      currentStep = "ingestion documents " + (i + 1) + "/" + SAMPLE_DOCS.length;
+
+      let vector: number[];
+      try {
+        [vector] = await embeddings.embedDocuments([doc.content]);
+      } catch (err) {
+        throw new Error(
+          "Embedding Ollama echoue pour le document " + (i + 1) + "/" + SAMPLE_DOCS.length,
+          { cause: err instanceof Error ? err : undefined }
+        );
+      }
+
+      if (!vector?.length) {
+        throw new Error(
+          "Embedding vide pour le document " + (i + 1) + " (attendu " + EMBEDDING_DIM + " dimensions)"
+        );
+      }
+
+      // Inserer dans PostgreSQL
+      try {
+        await client.query(
+          "INSERT INTO documents (content, metadata, embedding) VALUES ($1, $2, $3)",
+          [doc.content, JSON.stringify(doc.metadata), JSON.stringify(vector)]
+        );
+      } catch (err) {
+        throw new Error("INSERT PostgreSQL echoue pour le document " + (i + 1), {
+          cause: err instanceof Error ? err : undefined,
+        });
+      }
+
+      console.log("  [+] " + doc.content.slice(0, 60) + "...");
+    }
+
+    console.log(`\n✓ ${SAMPLE_DOCS.length} documents injectes avec succes !`);
+    console.log("\nTu peux maintenant lancer l'app : npm run dev");
+  } finally {
+    await client.end().catch(() => {});
   }
-
-  // --- Etape 6 : Ingerer les documents ---
-  const embeddings = new OllamaEmbeddings({
-    model: EMBEDDING_MODEL,
-    baseUrl: OLLAMA_BASE_URL,
-  });
-
-  console.log(`Ingestion de ${SAMPLE_DOCS.length} documents...\n`);
-
-  for (const doc of SAMPLE_DOCS) {
-    // Generer l'embedding avec le prefix "search_document:" requis par nomic-embed-text
-    const [vector] = await embeddings.embedDocuments(["search_document: " + doc.content]);
-
-    // Inserer dans PostgreSQL
-    await client.query(
-      "INSERT INTO documents (content, metadata, embedding) VALUES ($1, $2, $3)",
-      [doc.content, JSON.stringify(doc.metadata), JSON.stringify(vector)]
-    );
-
-    console.log("  [+] " + doc.content.slice(0, 60) + "...");
-  }
-
-  await client.end();
-  console.log(`\n✓ ${SAMPLE_DOCS.length} documents injectes avec succes !`);
-  console.log("\nTu peux maintenant lancer l'app : npm run dev");
 }
 
-seed().catch((err) => {
-  console.error("\n✗ Seed echoue:", err.message);
-  process.exit(1);
-});
+seed().catch(reportSeedFailure);
